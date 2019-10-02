@@ -1,0 +1,272 @@
+#include<iostream>
+#include<fstream>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#include<regex>
+#include<unistd.h>
+using namespace std;
+//https://devdocs.io/cpp/filesystem/directory_iterator/increment
+//https://devdocs.io/cpp/filesystem/directory_entry/exists
+//https://devdocs.io/cpp/filesystem/directory_entry/file_size
+int backlog = 5;
+const int chunk_size = 1024;
+
+int send_message(int sockfd, string message){
+//Prints error message if not sent and returns -10
+//Else returns number of bytes sent
+	//Convert to char array
+	char mess[message.length()+1];
+	for (int i=0; i< message.length();i++){
+		mess[i] = message[i];
+	}
+	mess[message.length()] = '\0';
+	//Send char array
+	int x = send(sockfd,&mess,strlen(mess),0);
+	if(x<0){
+		cerr<<"Message not sent: "<<message<<endl;
+		return -10;
+	}
+	return x;
+}
+
+string rec_message(int sockfd){
+//received upto chunk_size bytes and outputs as string.
+//Prints appropriate errors
+	char buff[chunk_size] = {0};
+	int read_bytes = recv(sockfd,(void*)&buff, chunk_size, 0);
+	if(read_bytes == 0){
+		cerr<<"Connection closed before reading\n";
+		exit(0);
+	}
+	else if(read_bytes == -1){
+		cerr<<"Error on receive\n";
+		exit(0);
+	}
+	string buf(buff);
+	return buf;
+}
+
+int parse_message(string buf,string username, string password){
+	regex quit("quit");
+	regex LIST("LIST");
+	regex RETRV("RETRV ...");
+	regex message("(User:\\s)(.*)( Pass:\\s)(.*)");
+	regex words("[^:\\s]");
+//Quit case
+	if(regex_match(buf, quit)){
+		cout<<"Bye "<<username<<endl;
+		return -1;
+	}
+//Extracting Username and Password
+	else if(regex_match(buf, message)){
+		int f1 = buf.find(" ");
+		//cout<<"f1 is "<<f1<<endl;
+		int f2 = buf.find("Pass:",f1+1);
+		//cout<<"f2 is "<<f2<<endl;
+		string message_username = buf.substr(f1+1,f2-7);
+		f1 = buf.find(": ",f2+1);
+		string message_password = buf.substr(f1+2);
+		if(username!=message_username){
+			cout<< "Invalid User\n";
+			//cout<<"Extracted username is "<<message_username<<"A"<<endl;
+			//cout<<"Extracted password is "<<message_password<<"A"<<endl;
+			//cout<<"Username is "<<username<<"A"<<endl;
+			//cout<<"Password is "<<password<<"A"<<endl;
+			close(in_socket);
+		}
+		else if(password!=message_password){
+			cout<<"Wrong Passwd\n";
+			close(in_socket);
+		}
+		else{
+			return 0;
+		}
+	}
+	else if (regex_match(buf, LIST)){
+	 return 1;
+	}
+	else if(regex_match(buf, RETRV)){
+	 return 2;
+	}
+
+	//Invalid message
+	else{
+		cout<<"Unknown Command\n";
+		return -1;
+	}
+}
+
+void interaction(){
+//Initialize sockaddr
+	sockaddr_in myaddress;
+	myaddress.sin_family = AF_INET;
+	myaddress.sin_addr.s_addr = INADDR_ANY;//inet_aton("127.0.0.1")
+	myaddress.sin_port = htons(port);
+    memset(&(myaddress.sin_zero), '\0', 8); // zero the rest of the struct
+	int size_addr = sizeof(struct sockaddr);
+
+//Set up socket
+	int opt = 1;
+	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
+	if(sockfd == 0){
+		cerr<<"Couldn't form socket\n";
+		exit(2);
+	}
+	else if(bind(sockfd,(sockaddr *) &myaddress, size_addr) < 0
+		|| listen(sockfd,backlog) < 0){
+		cerr<<"Bind failed\n";
+		exit(2);
+	}
+	else{
+		cout<<"BindDone: "<<port<<"\n";
+		cout<<"ListenDone: "<<port<<"\n";
+	}
+
+//Accept connections
+	sockaddr_in client_address;
+	int in_socket = accept(sockfd,(struct sockaddr *)&client_address, (socklen_t*)&size_addr);
+	if(in_socket < 0){
+		cerr<<"Couldn't accept connection\n";
+		exit(2);
+	}
+	else{
+		cout<<"Client: "<<inet_ntoa(client_address.sin_addr)<<":"<<ntohs(client_address.sin_port)<<endl; //“Client: ipaddr:port\n”
+	}
+
+//Receive message
+	string buf = rec_message(in_socket);
+	if(parse_message(buf,username,password)<0){
+		close(in_socket);
+	}
+	else if (parse_message(buf,username,password)==0){
+		string welcome_message = "Welcome "+username+"\n";
+		cout<<welcome_message;
+		int p=send_message(in_socket,welcome_message); //< 0){
+		//	cout<<"Message not sent"<<endl;
+		//}
+	}
+	else if (parse_message(buf,username,password)==1){
+	//int N= no_of_msg(userdb,username);//to define no_of_msg
+	string prepath(argv[3]);
+	prepath.append("/");
+	prepath.append(username);
+	const char* path = prepath.c_str();
+	DIR* pathdir = NULL;
+	struct dirent* pt = NULL;
+	pathdir = opendir(path);
+	if (pathdir == NULL){
+	 //cout<<username<<" Folder read fail\n";
+	 cout<<"Message read fail\n";
+	 close(in_socket);
+	}
+	else{
+	int N =0;
+	while (pt = readdir(pathdir)!=NULL){
+	 if (pt->d_name[0]!='.'){
+	  N++;
+	 }
+	}
+	string list_message = username + " : No of messages" + N + "\n";
+	cout<<list_message;
+	send_message(in_socket,list_message);
+	 int p=send_message(in_socket,list_message); // < 0){
+			//cout<<"Message not sent"<<endl;
+	  }
+	 }
+
+	else{
+	 int f1=buf.find(" ");
+	 string message_id = buf.substr(f1+1,buf.length()-f1-1);
+	 string prepath(argv[3]);
+	 prepath.append("/");
+	 prepath.append(username);
+	 const char* path = prepath.c_str();
+	 DIR* pathdir = NULL;
+	 struct dirent* pt = NULL;
+	 pathdir = opendir(path);
+	  if (pathdir == NULL){
+	   //cout<<username<<" Folder read fail\n";
+	   cout<<"Message read fail\n";
+	   close(in_socket);
+	   }
+	  else{
+	   string file_to_send;
+	   bool msg_found = false;
+	   //ifstream my_msg_file;
+           //my_msg_file.open(
+	   while (pt = readdir(pathdir)!=NULL){
+	    int a=pt->d_name.find(".");
+	    string b=pt->d_name.substr(0,a);
+	    if (message_id == b){
+	     file_to_send=pt->d_name;
+	     msg_found = true;
+	     break;
+   	    }
+   	    }
+	   if(!msg_found){
+	  //message of the id not present
+	  cout<<"Message read fail\n";
+	  close(in_socket);
+          }
+	   else{
+	    ifstream my_msg_file;
+           my_msg_file.open(file_to_send);
+	  cout<<username<<": Transferring Message "<<message_id<<"\n";
+	  int p=send_message(in_socket,file_to_send);
+	   }
+	  }
+	}
+	interaction();
+}
+
+
+int main(int argc, char*argv[]){
+//Validates Arguments
+	if (argc != 4){
+		cerr<<"Invalid number of arguments\nUsage: SimpleEmailServerPhase3 <PortNum> <PasswordFile> <user-database> \n";
+		exit(1);
+	}
+	char **x;
+	int port = strtol(argv[1],x,10);
+	if(port == 0){
+		cout<<"Invalid port\n";
+		exit(2);
+	}
+	//cout<<"port is"<<" "<<port<<endl;
+	char *filename = argv[2];
+	//cout<<"filename is"<<" "<<filename<<endl;
+
+// Password file
+	ifstream myfile;
+	myfile.open(filename);
+  	if(!myfile.good()){
+  		cerr<<"Unable to open file\n";
+  		exit(3);
+  	}
+  	//ifstream userdb;
+  	//userdb.open(username);
+  	//if(!myfile.good()){
+  		//cerr<<"Unable to access file\n";
+  	//	exit(4);
+  //	}
+  do{
+   DIR* pdir = NULL;
+   struct dirent* pent = NULL;
+   pdir = opendir(argv[3]);
+   if (pdir== NULL){
+    cerr<<"Unable to access user database file\n";
+    exit(4);
+   }
+  }
+
+  	string username,password;
+  	myfile>>username>>password;
+  	// cout<<"Username is "<<username<<endl;
+  	// cout<<"Password is "<<password<<endl;
+  	myfile.close();
+
+    interaction();
+
+}
